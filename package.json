@@ -1,0 +1,14 @@
+{
+  "name": "akral-pos",
+  "version": "1.0.0",
+  "description": "Responsive Google Sheets-backed POS web app for Akral coffee shop.",
+  "main": "src/server/index.js",
+  "scripts": {
+    "start": "node src/server/index.js",
+    "dev": "NODE_ENV=development node src/server/index.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "UNLICENSED"
+}

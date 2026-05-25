@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f1ea">
+    <title>Akral POS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles/app.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Coffee shop POS</p>
+          <h1>Akral</h1>
+        </div>
+        <nav class="tabs" aria-label="Main views">
+          <button class="tab active" data-view="order">Order</button>
+          <button class="tab" data-view="history">History</button>
+          <button class="tab" data-view="dashboard">Dashboard</button>
+        </nav>
+      </header>
+
+      <main>
+        <section class="view order-view active" id="orderView">
+          <section class="menu-pane" aria-label="Menu">
+            <div class="toolbar">
+              <label class="search-field">
+                <span>Search</span>
+                <input id="searchInput" type="search" placeholder="Find drinks">
+              </label>
+              <div class="category-tabs" role="group" aria-label="Menu category">
+                <button class="chip active" data-category="All">All</button>
+                <button class="chip" data-category="Coffee">Coffee</button>
+                <button class="chip" data-category="Non Coffee">Non Coffee</button>
+              </div>
+            </div>
+            <div class="setup-warning hidden" id="setupWarning"></div>
+            <div class="menu-grid" id="menuGrid"></div>
+          </section>
+
+          <aside class="cart-pane" aria-label="Current order">
+            <div class="cart-head">
+              <div>
+                <p class="eyebrow">Current order</p>
+                <h2 id="cartTitle">New order</h2>
+              </div>
+              <button class="ghost-button" id="clearCartButton">Clear</button>
+            </div>
+            <div class="cart-items" id="cartItems"></div>
+
+            <div class="order-controls">
+              <label class="toggle-row">
+                <input id="taxToggle" type="checkbox">
+                <span>Tax 11%</span>
+              </label>
+              <div class="discount-row">
+                <select id="discountType" aria-label="Discount type">
+                  <option value="percentage">Discount %</option>
+                  <option value="fixed">Discount Rp</option>
+                </select>
+                <input id="discountValue" type="number" min="0" inputmode="numeric" placeholder="0">
+              </div>
+            </div>
+
+            <div class="totals">
+              <div><span>Subtotal</span><strong id="subtotalText">Rp0</strong></div>
+              <div><span>Discount</span><strong id="discountText">Rp0</strong></div>
+              <div><span>Tax</span><strong id="taxText">Rp0</strong></div>
+              <div class="grand-total"><span>Total</span><strong id="totalText">Rp0</strong></div>
+            </div>
+
+            <div class="checkout">
+              <div class="payment-methods" role="group" aria-label="Payment method">
+                <button class="payment active" data-payment="Cash">Cash</button>
+                <button class="payment" data-payment="QRIS">QRIS</button>
+                <button class="payment" data-payment="Transfer">Transfer</button>
+              </div>
+              <label class="cash-field" id="cashField">
+                <span>Cash received</span>
+                <input id="cashReceived" type="number" min="0" inputmode="numeric" placeholder="0">
+              </label>
+              <div class="change-line" id="changeLine">Change Rp0</div>
+              <button class="primary-button checkout-button" id="checkoutButton">
+                <span class="button-spinner" aria-hidden="true"></span>
+                <span id="checkoutButtonText">Confirm order</span>
+              </button>
+            </div>
+          </aside>
+        </section>
+
+        <section class="view history-view" id="historyView">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Google Sheets</p>
+              <h2>Order history</h2>
+            </div>
+            <button class="ghost-button" id="refreshHistoryButton">Refresh</button>
+          </div>
+          <div class="history-tools">
+            <input id="historySearch" type="search" placeholder="Search order number">
+            <input id="historyDate" type="date">
+          </div>
+          <div class="summary-strip">
+            <div><span>Daily sales</span><strong id="dailySales">Rp0</strong></div>
+            <div><span>Monthly sales</span><strong id="monthlySales">Rp0</strong></div>
+            <div><span>Orders today</span><strong id="dailyOrders">0</strong></div>
+          </div>
+          <div class="orders-list" id="ordersList"></div>
+        </section>
+
+        <section class="view dashboard-view" id="dashboardView">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Akral today</p>
+              <h2>Dashboard</h2>
+            </div>
+          </div>
+          <div class="metric-grid">
+            <div class="metric-card"><span>Today's sales</span><strong id="todaySalesMetric">Rp0</strong></div>
+            <div class="metric-card"><span>Total orders</span><strong id="todayOrdersMetric">0</strong></div>
+            <div class="metric-card"><span>Best seller</span><strong id="bestSellerMetric">-</strong></div>
+            <div class="metric-card"><span>Top category</span><strong id="topCategoryMetric">-</strong></div>
+          </div>
+          <div class="chart-layout">
+            <section class="chart-panel">
+              <div class="panel-head">
+                <h3>Revenue chart</h3>
+                <span>This month</span>
+              </div>
+              <div class="bar-chart" id="revenueChart"></div>
+            </section>
+            <section class="chart-panel">
+              <div class="panel-head">
+                <h3>Sales by category</h3>
+                <span>Items sold</span>
+              </div>
+              <div class="category-chart" id="categoryChart"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="modal" id="manualBrewModal">
+      <form method="dialog" class="modal-card" id="manualBrewForm">
+        <h2>Manual Brew</h2>
+        <label>
+          <span>Custom price</span>
+          <input id="manualPrice" type="number" min="1" inputmode="numeric" placeholder="35000" required>
+        </label>
+        <label>
+          <span>Bean</span>
+          <input id="manualBean" type="text" placeholder="Optional">
+        </label>
+        <label>
+          <span>Notes</span>
+          <textarea id="manualNotes" rows="3" placeholder="Optional"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button class="ghost-button" value="cancel" type="button" id="cancelManualButton">Cancel</button>
+          <button class="primary-button" value="confirm" type="submit">Add drink</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="confirmModal">
+      <div class="modal-card">
+        <h2>Order saved</h2>
+        <p id="confirmText"></p>
+        <button class="primary-button" id="closeConfirmButton">Done</button>
+      </div>
+    </dialog>
+
+    <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="/scripts/app.js" defer></script>
+  </body>
+</html>
