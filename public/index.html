@@ -36,6 +36,7 @@
                 <button class="chip active" data-category="All">All</button>
                 <button class="chip" data-category="Coffee">Coffee</button>
                 <button class="chip" data-category="Non Coffee">Non Coffee</button>
+                <button class="chip" data-category="Food">Food</button>
               </div>
             </div>
             <div class="setup-warning hidden" id="setupWarning"></div>
@@ -115,23 +116,54 @@
         <section class="view dashboard-view" id="dashboardView">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Akral today</p>
+              <p class="eyebrow">Akral sales</p>
               <h2>Dashboard</h2>
             </div>
+            <button class="ghost-button" id="refreshDashboardButton">Refresh</button>
           </div>
-          <div class="metric-grid">
-            <div class="metric-card"><span>Today's sales</span><strong id="todaySalesMetric">Rp0</strong></div>
-            <div class="metric-card"><span>Total orders</span><strong id="todayOrdersMetric">0</strong></div>
-            <div class="metric-card"><span>Best seller</span><strong id="bestSellerMetric">-</strong></div>
-            <div class="metric-card"><span>Top category</span><strong id="topCategoryMetric">-</strong></div>
+
+          <div class="dashboard-filters">
+            <label>
+              <span>Start date</span>
+              <input id="dashboardStartDate" type="date">
+            </label>
+            <label>
+              <span>End date</span>
+              <input id="dashboardEndDate" type="date">
+            </label>
           </div>
-          <div class="chart-layout">
-            <section class="chart-panel">
+
+          <div class="dashboard-loading hidden" id="dashboardLoading" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <div class="metric-grid dashboard-metrics" id="dashboardMetrics">
+            <div class="metric-card"><span>Sales</span><strong id="salesMetric">Rp0</strong></div>
+            <div class="metric-card"><span>Order</span><strong id="orderMetric">0</strong></div>
+            <div class="metric-card"><span>Cup Sales</span><strong id="cupSalesMetric">0 cups</strong></div>
+            <div class="metric-card"><span>Best Seller</span><strong id="bestSellerMetric">-</strong></div>
+            <div class="metric-card"><span>Top Category</span><strong id="topCategoryMetric">-</strong></div>
+          </div>
+
+          <div class="chart-layout dashboard-chart-layout">
+            <section class="chart-panel revenue-panel">
               <div class="panel-head">
                 <h3>Revenue chart</h3>
-                <span>This month</span>
+                <span id="dashboardRangeLabel">Current month</span>
               </div>
-              <div class="bar-chart" id="revenueChart"></div>
+              <div class="stacked-chart-wrap">
+                <div class="chart-y-axis" id="revenueYAxis"></div>
+                <div>
+                  <div class="stacked-chart" id="revenueChart"></div>
+                  <div class="chart-x-axis" id="revenueXAxis"></div>
+                </div>
+              </div>
+              <div class="chart-legend">
+                <span><i class="legend-coffee"></i>Coffee</span>
+                <span><i class="legend-noncoffee"></i>Non Coffee</span>
+                <span><i class="legend-food"></i>Food</span>
+              </div>
+              <div class="chart-tooltip hidden" id="chartTooltip"></div>
             </section>
             <section class="chart-panel">
               <div class="panel-head">
@@ -141,6 +173,56 @@
               <div class="category-chart" id="categoryChart"></div>
             </section>
           </div>
+
+          <section class="chart-panel menu-sold-panel">
+            <div class="panel-head">
+              <h3>Menu Sold Count</h3>
+              <span id="menuSoldTotal">0 cups</span>
+            </div>
+            <div class="menu-sold-list" id="menuSoldList"></div>
+          </section>
+
+          <section class="chart-panel order-log-panel">
+            <div class="panel-head order-log-head">
+              <div>
+                <h3>Order Log</h3>
+                <span id="orderLogCount">0 records</span>
+              </div>
+              <div class="order-log-tools">
+                <input id="dashboardOrderSearch" type="search" placeholder="Search order or item">
+                <select id="dashboardSort" aria-label="Sort order log">
+                  <option value="date-desc">Date newest</option>
+                  <option value="date-asc">Date oldest</option>
+                  <option value="order-asc">Order ID A-Z</option>
+                  <option value="order-desc">Order ID Z-A</option>
+                  <option value="price-desc">Price high-low</option>
+                  <option value="price-asc">Price low-high</option>
+                </select>
+              </div>
+            </div>
+            <div class="order-table-wrap">
+              <table class="order-log-table">
+                <thead>
+                  <tr>
+                    <th>Order ID</th>
+                    <th>Date</th>
+                    <th>Items</th>
+                    <th>Quantity</th>
+                    <th>Discount</th>
+                    <th>Tax</th>
+                    <th>Price</th>
+                    <th>Category</th>
+                  </tr>
+                </thead>
+                <tbody id="orderLogBody"></tbody>
+              </table>
+            </div>
+            <div class="pagination">
+              <button class="ghost-button" id="orderLogPrev">Previous</button>
+              <span id="orderLogPage">Page 1 of 1</span>
+              <button class="ghost-button" id="orderLogNext">Next</button>
+            </div>
+          </section>
         </section>
       </main>
     </div>

@@ -5,7 +5,13 @@ const state = {
   activeCategory: "All",
   paymentMethod: "Cash",
   pendingManualProduct: null,
-  isCheckingOut: false
+  isCheckingOut: false,
+  dashboardPage: 1,
+  dashboardPageSize: 12,
+  dashboardSort: "date-desc",
+  dashboardLoading: false,
+  dashboardDatesInitialized: false,
+  dashboardDayMap: new Map()
 };
 
 const rupiah = new Intl.NumberFormat("id-ID", {
@@ -33,11 +39,48 @@ function formatIDR(value) {
   return rupiah.format(Number(value || 0)).replace(/\s/g, "");
 }
 
+function dateKey(date) {
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) return "";
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatChartDate(key) {
+  if (!key) return "-";
+  const date = new Date(`${key}T00:00:00`);
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function startOfCurrentMonthKey() {
+  const now = new Date();
+  return dateKey(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function todayKey() {
+  return dateKey(new Date());
+}
+
 function showToast(message) {
   $("#toast").textContent = message;
   $("#toast").classList.remove("hidden");
   clearTimeout(showToast.timeout);
   showToast.timeout = setTimeout(() => $("#toast").classList.add("hidden"), 3800);
+}
+
+function initializeDashboardDates() {
+  if (state.dashboardDatesInitialized) return;
+  $("#dashboardStartDate").value = startOfCurrentMonthKey();
+  $("#dashboardEndDate").value = todayKey();
+  state.dashboardDatesInitialized = true;
+}
+
+function setDashboardLoading(isLoading) {
+  state.dashboardLoading = isLoading;
+  $("#dashboardLoading").classList.toggle("hidden", !isLoading);
+  $("#dashboardMetrics").classList.toggle("hidden", isLoading);
 }
 
 function setCheckoutLoading(isLoading) {
@@ -274,77 +317,280 @@ function renderHistory() {
 }
 
 function renderSummaries() {
-  const now = new Date();
-  const todayKey = now.toISOString().slice(0, 10);
-  const monthKey = now.toISOString().slice(0, 7);
-  const todayOrders = state.orders.filter((order) => orderDate(order).toISOString().slice(0, 10) === todayKey);
-  const monthlyOrders = state.orders.filter((order) => orderDate(order).toISOString().slice(0, 7) === monthKey);
+  const currentTodayKey = todayKey();
+  const monthKey = currentTodayKey.slice(0, 7);
+  const todayOrders = state.orders.filter((order) => dateKey(order.date) === currentTodayKey);
+  const monthlyOrders = state.orders.filter((order) => dateKey(order.date).slice(0, 7) === monthKey);
   const todaySales = todayOrders.reduce((sum, order) => sum + order.total, 0);
   const monthlySales = monthlyOrders.reduce((sum, order) => sum + order.total, 0);
 
   $("#dailySales").textContent = formatIDR(todaySales);
   $("#monthlySales").textContent = formatIDR(monthlySales);
   $("#dailyOrders").textContent = todayOrders.length;
-  $("#todaySalesMetric").textContent = formatIDR(todaySales);
-  $("#todayOrdersMetric").textContent = todayOrders.length;
+  renderDashboard();
+}
 
-  const itemCounts = new Map();
-  const categoryCounts = new Map();
-  todayOrders.forEach((order) => {
-    order.items.forEach((item) => {
-      itemCounts.set(item.name, (itemCounts.get(item.name) || 0) + item.quantity);
-      categoryCounts.set(item.category, (categoryCounts.get(item.category) || 0) + item.quantity);
+function normalizeCategory(category) {
+  const value = String(category || "").trim().toLowerCase().replace(/[-_]+/g, " ");
+  if (value === "non coffee" || value === "noncoffee") return "Non Coffee";
+  if (value === "food") return "Food";
+  return "Coffee";
+}
+
+function selectedDashboardOrders() {
+  const start = $("#dashboardStartDate").value || startOfCurrentMonthKey();
+  const end = $("#dashboardEndDate").value || todayKey();
+  const startValue = start <= end ? start : end;
+  const endValue = start <= end ? end : start;
+  return state.orders.filter((order) => {
+    const key = dateKey(order.date);
+    return key >= startValue && key <= endValue;
+  });
+}
+
+function orderItems(order) {
+  return Array.isArray(order.items) ? order.items : [];
+}
+
+function buildDashboardData(orders) {
+  const days = new Map();
+  const items = new Map();
+  const categories = new Map([
+    ["Coffee", { quantity: 0, revenue: 0 }],
+    ["Non Coffee", { quantity: 0, revenue: 0 }],
+    ["Food", { quantity: 0, revenue: 0 }]
+  ]);
+  const rows = [];
+
+  orders.forEach((order) => {
+    const key = dateKey(order.date);
+    if (!days.has(key)) {
+      days.set(key, {
+        dateKey: key,
+        totalRevenue: 0,
+        orders: 0,
+        cups: 0,
+        categories: { Coffee: 0, "Non Coffee": 0, Food: 0 }
+      });
+    }
+
+    const day = days.get(key);
+    day.totalRevenue += Number(order.total || 0);
+    day.orders += 1;
+
+    orderItems(order).forEach((item) => {
+      const category = normalizeCategory(item.category);
+      const quantity = Number(item.quantity || 0);
+      const lineTotal = Number(item.price || 0) * quantity;
+      day.cups += quantity;
+      day.categories[category] += lineTotal;
+
+      const categoryStats = categories.get(category) || { quantity: 0, revenue: 0 };
+      categoryStats.quantity += quantity;
+      categoryStats.revenue += lineTotal;
+      categories.set(category, categoryStats);
+
+      const itemStats = items.get(item.name) || { name: item.name, quantity: 0 };
+      itemStats.quantity += quantity;
+      items.set(item.name, itemStats);
+
+      rows.push({
+        orderID: order.orderID,
+        date: order.date,
+        itemName: item.name,
+        quantity,
+        discount: Number(order.discount || 0),
+        tax: Number(order.tax || 0),
+        price: lineTotal,
+        category
+      });
     });
   });
 
-  const bestSeller = Array.from(itemCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-  const topCategory = Array.from(categoryCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-  $("#bestSellerMetric").textContent = bestSeller ? bestSeller[0] : "-";
-  $("#topCategoryMetric").textContent = topCategory ? topCategory[0] : "-";
-
-  renderRevenueChart(monthlyOrders);
-  renderCategoryChart(categoryCounts);
+  return {
+    days: Array.from(days.values()).sort((a, b) => a.dateKey.localeCompare(b.dateKey)),
+    items: Array.from(items.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name)),
+    categories,
+    rows
+  };
 }
 
-function renderRevenueChart(orders) {
-  const byDay = new Map();
-  orders.forEach((order) => {
-    const key = orderDate(order).toISOString().slice(8, 10);
-    byDay.set(key, (byDay.get(key) || 0) + order.total);
-  });
-  const days = Array.from({ length: 14 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (13 - index));
-    const key = date.toISOString().slice(8, 10);
-    return { key, revenue: byDay.get(key) || 0 };
-  });
-  const max = Math.max(1, ...days.map((day) => day.revenue));
+function renderDashboard() {
+  if (!$("#dashboardView")) return;
+  initializeDashboardDates();
+  const orders = selectedDashboardOrders();
+  const data = buildDashboardData(orders);
+  state.dashboardDayMap = new Map(data.days.map((day) => [day.dateKey, day]));
+  const totalSales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  const cupSales = data.items.reduce((sum, item) => sum + item.quantity, 0);
+  const bestSeller = data.items[0];
+  const topCategory = Array.from(data.categories.entries()).sort((a, b) => b[1].quantity - a[1].quantity)[0];
+
+  $("#salesMetric").textContent = formatIDR(totalSales);
+  $("#orderMetric").textContent = orders.length;
+  $("#cupSalesMetric").textContent = `${cupSales} cups`;
+  $("#bestSellerMetric").textContent = bestSeller ? `${bestSeller.name} - ${bestSeller.quantity}` : "-";
+  $("#topCategoryMetric").textContent = topCategory && topCategory[1].quantity ? topCategory[0] : "-";
+  $("#dashboardRangeLabel").textContent = `${formatChartDate($("#dashboardStartDate").value)} - ${formatChartDate($("#dashboardEndDate").value)}`;
+
+  renderRevenueChart(data.days);
+  renderCategoryChart(data.categories);
+  renderMenuSoldCount(data.items, cupSales);
+  renderOrderLog(data.rows);
+}
+
+function renderRevenueChart(days) {
+  const categories = ["Coffee", "Non Coffee", "Food"];
+  const maxRevenue = Math.max(
+    1,
+    ...days.map((day) => Math.max(day.totalRevenue, categories.reduce((sum, category) => sum + day.categories[category], 0)))
+  );
+  const ticks = [maxRevenue, maxRevenue * 0.75, maxRevenue * 0.5, maxRevenue * 0.25, 0].map((value) => Math.round(value / 1000) * 1000);
+  const chartColumns = Math.max(days.length, 1);
+
+  $("#revenueYAxis").innerHTML = ticks.map((tick) => `<span>${formatIDR(tick)}</span>`).join("");
+  $("#revenueChart").style.gridTemplateColumns = `repeat(${chartColumns}, minmax(26px, 1fr))`;
+  $("#revenueXAxis").style.gridTemplateColumns = `repeat(${chartColumns}, minmax(26px, 1fr))`;
+
+  if (!days.length) {
+    $("#revenueChart").innerHTML = `<div class="empty-cart" style="grid-column:1 / -1">No revenue in this range</div>`;
+    $("#revenueXAxis").innerHTML = `<span>-</span>`;
+    return;
+  }
+
   $("#revenueChart").innerHTML = days
-    .map((day) => `<span class="bar" title="${day.key}: ${formatIDR(day.revenue)}" style="height: ${Math.max(4, (day.revenue / max) * 100)}%"></span>`)
+    .map((day) => {
+      const stackTotal = categories.reduce((sum, category) => sum + day.categories[category], 0);
+      const height = Math.max(6, (Math.max(day.totalRevenue, stackTotal) / maxRevenue) * 100);
+      const segments = categories
+        .map((category) => {
+          const value = day.categories[category];
+          const percent = stackTotal ? (value / stackTotal) * 100 : 0;
+          return `<span class="stack-segment stack-${category.toLowerCase().replace(/\s/g, "")}" style="height:${percent}%"></span>`;
+        })
+        .join("");
+      return `
+        <button class="stacked-bar" data-day="${escapeHTML(day.dateKey)}" style="height:${height}%" aria-label="${escapeHTML(day.dateKey)} revenue">
+          ${segments}
+        </button>
+      `;
+    })
     .join("");
+  $("#revenueXAxis").innerHTML = days.map((day) => `<span>${formatChartDate(day.dateKey)}</span>`).join("");
 }
 
-function renderCategoryChart(categoryCounts) {
-  const entries = ["Coffee", "Non Coffee"].map((category) => [category, categoryCounts.get(category) || 0]);
-  const max = Math.max(1, ...entries.map((entry) => entry[1]));
+function showChartTooltip(event, day) {
+  const tooltip = $("#chartTooltip");
+  tooltip.innerHTML = `
+    <strong>${formatChartDate(day.dateKey)}</strong>
+    <div><span>Total revenue</span><b>${formatIDR(day.totalRevenue)}</b></div>
+    <div><span>Coffee revenue</span><b>${formatIDR(day.categories.Coffee)}</b></div>
+    <div><span>Non Coffee revenue</span><b>${formatIDR(day.categories["Non Coffee"])}</b></div>
+    <div><span>Orders</span><b>${day.orders}</b></div>
+    <div><span>Cups sold</span><b>${day.cups}</b></div>
+  `;
+  tooltip.style.left = `${event.clientX}px`;
+  tooltip.style.top = `${event.clientY}px`;
+  tooltip.classList.remove("hidden");
+}
+
+function hideChartTooltip() {
+  $("#chartTooltip").classList.add("hidden");
+}
+
+function renderCategoryChart(categoryStats) {
+  const entries = ["Coffee", "Non Coffee", "Food"].map((category) => [category, categoryStats.get(category) || { quantity: 0, revenue: 0 }]);
+  const max = Math.max(1, ...entries.map((entry) => entry[1].quantity));
   $("#categoryChart").innerHTML = entries
     .map(
-      ([category, count]) => `
+      ([category, stats]) => `
         <div class="category-line">
-          <span>${escapeHTML(category)} · ${count}</span>
-          <div><i style="width:${(count / max) * 100}%"></i></div>
+          <span>${escapeHTML(category)} · ${stats.quantity} cups · ${formatIDR(stats.revenue)}</span>
+          <div><i style="width:${(stats.quantity / max) * 100}%"></i></div>
         </div>
       `
     )
     .join("");
 }
 
+function renderMenuSoldCount(items, totalCups) {
+  $("#menuSoldTotal").textContent = `${totalCups} cups`;
+  if (!items.length) {
+    $("#menuSoldList").innerHTML = `<div class="empty-cart">No menu sold in this range</div>`;
+    return;
+  }
+  const max = Math.max(1, items[0].quantity);
+  $("#menuSoldList").innerHTML = items
+    .map(
+      (item, index) => `
+        <div class="menu-sold-row ${index === 0 ? "top-seller" : ""}">
+          <strong>${escapeHTML(item.name)}</strong>
+          <div class="menu-progress"><i style="width:${(item.quantity / max) * 100}%"></i></div>
+          <span>${item.quantity}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function filteredOrderRows(rows) {
+  const query = $("#dashboardOrderSearch").value.trim().toLowerCase();
+  const filtered = query
+    ? rows.filter((row) => `${row.orderID} ${row.itemName} ${row.category}`.toLowerCase().includes(query))
+    : rows.slice();
+  const sort = state.dashboardSort;
+  filtered.sort((a, b) => {
+    if (sort === "date-asc") return new Date(a.date) - new Date(b.date);
+    if (sort === "date-desc") return new Date(b.date) - new Date(a.date);
+    if (sort === "order-asc") return a.orderID.localeCompare(b.orderID);
+    if (sort === "order-desc") return b.orderID.localeCompare(a.orderID);
+    if (sort === "price-asc") return a.price - b.price;
+    if (sort === "price-desc") return b.price - a.price;
+    return 0;
+  });
+  return filtered;
+}
+
+function renderOrderLog(rows) {
+  const filtered = filteredOrderRows(rows);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / state.dashboardPageSize));
+  state.dashboardPage = Math.min(state.dashboardPage, totalPages);
+  const start = (state.dashboardPage - 1) * state.dashboardPageSize;
+  const pageRows = filtered.slice(start, start + state.dashboardPageSize);
+
+  $("#orderLogCount").textContent = `${filtered.length} records`;
+  $("#orderLogPage").textContent = `Page ${state.dashboardPage} of ${totalPages}`;
+  $("#orderLogPrev").disabled = state.dashboardPage <= 1;
+  $("#orderLogNext").disabled = state.dashboardPage >= totalPages;
+  $("#orderLogBody").innerHTML = pageRows.length
+    ? pageRows
+        .map(
+          (row) => `
+            <tr>
+              <td>${escapeHTML(row.orderID)}</td>
+              <td>${orderDate(row).toLocaleDateString("id-ID")}</td>
+              <td>${escapeHTML(row.itemName)}</td>
+              <td>${row.quantity}</td>
+              <td>${formatIDR(row.discount)}</td>
+              <td>${formatIDR(row.tax)}</td>
+              <td>${formatIDR(row.price)}</td>
+              <td>${escapeHTML(row.category)}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : `<tr><td colspan="8">No order records in this range</td></tr>`;
+}
+
 async function loadOrders() {
+  setDashboardLoading(true);
   try {
     const data = await api("/api/orders");
     state.orders = data.orders || [];
   } catch (error) {
     state.orders = [];
+  } finally {
+    setDashboardLoading(false);
   }
   renderHistory();
 }
@@ -429,11 +675,46 @@ function bindEvents() {
   $("#checkoutButton").addEventListener("click", () => checkout().catch((error) => showToast(error.message)));
   $("#closeConfirmButton").addEventListener("click", () => $("#confirmModal").close());
   $("#refreshHistoryButton").addEventListener("click", loadOrders);
+  $("#refreshDashboardButton").addEventListener("click", loadOrders);
   $("#historySearch").addEventListener("input", renderHistory);
   $("#historyDate").addEventListener("input", renderHistory);
+  ["dashboardStartDate", "dashboardEndDate"].forEach((id) => {
+    $(`#${id}`).addEventListener("input", () => {
+      state.dashboardPage = 1;
+      renderDashboard();
+    });
+  });
+  $("#dashboardOrderSearch").addEventListener("input", () => {
+    state.dashboardPage = 1;
+    renderDashboard();
+  });
+  $("#dashboardSort").addEventListener("change", (event) => {
+    state.dashboardSort = event.target.value;
+    state.dashboardPage = 1;
+    renderDashboard();
+  });
+  $("#orderLogPrev").addEventListener("click", () => {
+    state.dashboardPage = Math.max(1, state.dashboardPage - 1);
+    renderDashboard();
+  });
+  $("#orderLogNext").addEventListener("click", () => {
+    state.dashboardPage += 1;
+    renderDashboard();
+  });
+  $("#revenueChart").addEventListener("mousemove", (event) => {
+    const bar = event.target.closest(".stacked-bar");
+    if (!bar) {
+      hideChartTooltip();
+      return;
+    }
+    const day = state.dashboardDayMap.get(bar.dataset.day);
+    if (day) showChartTooltip(event, day);
+  });
+  $("#revenueChart").addEventListener("mouseleave", hideChartTooltip);
 }
 
 bindEvents();
+initializeDashboardDates();
 loadProducts();
 loadOrders();
 renderCart();
