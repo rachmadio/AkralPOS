@@ -134,6 +134,12 @@ function productPrice(product) {
   return product.variablePrice ? "Custom" : formatIDR(product.price);
 }
 
+function productCartQuantity(productId) {
+  return state.cart
+    .filter((item) => item.id === productId)
+    .reduce((sum, item) => sum + item.quantity, 0);
+}
+
 function renderProducts() {
   const query = $("#searchInput").value.trim().toLowerCase();
   const products = state.products.filter((product) => {
@@ -144,10 +150,13 @@ function renderProducts() {
 
   $("#menuGrid").innerHTML = products
     .map(
-      (product) => `
-        <button class="product-card" data-product-id="${product.id}" style="--drink-color: ${product.color || "#9b6b43"}">
+      (product) => {
+        const quantity = productCartQuantity(product.id);
+        return `
+        <button class="product-card ${quantity ? "in-cart" : ""}" data-product-id="${product.id}" style="--drink-color: ${product.color || "#9b6b43"}">
           <div class="product-image">
             <img src="${escapeHTML(product.imageURL || "/assets/akral-cup.jpg")}" alt="${escapeHTML(product.name)}">
+            ${quantity ? `<span class="product-count">${quantity}</span>` : ""}
             <span class="drink-tint"></span>
             <span class="drink-glow"></span>
           </div>
@@ -159,7 +168,8 @@ function renderProducts() {
             </span>
           </span>
         </button>
-      `
+      `;
+      }
     )
     .join("");
 }
@@ -237,6 +247,7 @@ function renderCart() {
   $("#totalText").textContent = formatIDR(currentTotals.total);
   updateChange();
   setCheckoutLoading(state.isCheckingOut);
+  renderProducts();
 }
 
 function updateChange() {
