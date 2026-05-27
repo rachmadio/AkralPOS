@@ -68,7 +68,9 @@ const SHEETS = {
 };
 
 function doGet(e) {
-  const action = e.parameter.action;
+  const action = e && e.parameter ? e.parameter.action : 'ping';
+
+  if (action === 'ping') return json({ ok: true, version: 'akral-pos-v3' });
 
   if (action === 'products') return json({ products: getProducts() });
   if (action === 'orders') return json({ orders: getOrders() });
@@ -107,32 +109,58 @@ function getOrders() {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  return sheet.getRange(2, 1, lastRow - 1, 8).getValues()
+  return sheet.getRange(2, 1, lastRow - 1, 10).getValues()
     .filter(row => row[0])
-    .map(row => ({
-      orderID: row[0],
-      date: row[1],
-      items: row[2] ? JSON.parse(row[2]) : [],
-      subtotal: Number(row[3] || 0),
-      discount: Number(row[4] || 0),
-      tax: Number(row[5] || 0),
-      total: Number(row[6] || 0),
-      paymentMethod: row[7],
-    }))
+    .map(row => normalizeOrderRow(row))
     .reverse();
+}
+
+function normalizeOrderRow(row) {
+  const hasSplitDateTime = /^\d{2}:\d{2}:\d{2}$/.test(String(row[2] || ''));
+  if (hasSplitDateTime) {
+    return {
+      orderID: row[0],
+      date: parseSheetDateTime(row[1], row[2]),
+      sheetDate: row[1],
+      time: row[2],
+      items: row[3] ? JSON.parse(row[3]) : [],
+      subtotal: Number(row[4] || 0),
+      discount: Number(row[5] || 0),
+      discountType: row[6],
+      tax: Number(row[7] || 0),
+      total: Number(row[8] || 0),
+      paymentMethod: row[9],
+    };
+  }
+
+  return {
+    orderID: row[0],
+    date: row[1],
+    time: '',
+    items: row[2] ? JSON.parse(row[2]) : [],
+    subtotal: Number(row[3] || 0),
+    discount: Number(row[4] || 0),
+    discountType: '',
+    tax: Number(row[5] || 0),
+    total: Number(row[6] || 0),
+    paymentMethod: row[7],
+  };
 }
 
 function createOrder(order) {
   const ordersSheet = getOrCreateSheet(SHEETS.orders);
   const analyticsSheet = getOrCreateSheet(SHEETS.analytics);
   const bestSeller = (order.items || []).slice().sort((a, b) => b.quantity - a.quantity)[0];
+  const dateTime = formatSheetDateTime(order.date);
 
   ordersSheet.appendRow([
     order.orderID,
-    order.date,
+    dateTime.date,
+    dateTime.time,
     JSON.stringify(order.items || []),
     order.subtotal,
     order.discount,
+    order.discountType || '',
     order.tax,
     order.total,
     order.paymentMethod,
@@ -165,7 +193,7 @@ function syncProducts(products, headers) {
     product.variablePrice ? 'variable' : product.price,
     product.imageURL,
   ]));
-  ordersSheet.getRange(1, 1, 1, 8).setValues([headers.orders]);
+  ordersSheet.getRange(1, 1, 1, 10).setValues([headers.orders]);
   analyticsSheet.getRange(1, 1, 1, 4).setValues([headers.analytics]);
 
   return { ok: true, products: products.length };
@@ -174,6 +202,30 @@ function syncProducts(products, headers) {
 function getOrCreateSheet(name) {
   const spreadsheet = SpreadsheetApp.getActive();
   return spreadsheet.getSheetByName(name) || spreadsheet.insertSheet(name);
+}
+
+function formatSheetDateTime(isoDate) {
+  const value = new Date(isoDate);
+  return {
+    date: Utilities.formatDate(value, Session.getScriptTimeZone(), 'dd:MM:yyyy'),
+    time: Utilities.formatDate(value, Session.getScriptTimeZone(), 'HH:mm:ss'),
+  };
+}
+
+function parseSheetDateTime(date, time) {
+  if (/^\d{2}:\d{2}:\d{4}$/.test(String(date || ''))) {
+    const parts = String(date).split(':');
+    const timeParts = String(time || '00:00:00').split(':');
+    return new Date(
+      Number(parts[2]),
+      Number(parts[1]) - 1,
+      Number(parts[0]),
+      Number(timeParts[0] || 0),
+      Number(timeParts[1] || 0),
+      Number(timeParts[2] || 0)
+    ).toISOString();
+  }
+  return date;
 }
 
 function json(data) {
@@ -239,8 +291,8 @@ https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
 
 `Orders`
 
-| OrderID | Date | Items | Subtotal | Discount | Tax | Total | PaymentMethod |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| OrderID | Date | Time | Items | Subtotal | Discount | DiscountType | Tax | Total | PaymentMethod |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 `Analytics`
 

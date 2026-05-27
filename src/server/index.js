@@ -12,7 +12,7 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const PUBLIC_DIR = path.resolve(process.cwd(), "public");
 const PRODUCTS_RANGE = process.env.GOOGLE_SHEETS_PRODUCTS_RANGE || "Products!A2:E";
-const ORDERS_RANGE = process.env.GOOGLE_SHEETS_ORDERS_RANGE || "Orders!A2:H";
+const ORDERS_RANGE = process.env.GOOGLE_SHEETS_ORDERS_RANGE || "Orders!A2:J";
 const ANALYTICS_RANGE = process.env.GOOGLE_SHEETS_ANALYTICS_RANGE || "Analytics!A2:D";
 const ALLOW_LOCAL_MENU_FALLBACK = process.env.ALLOW_LOCAL_MENU_FALLBACK === "true";
 
@@ -133,7 +133,7 @@ function calculateOrder(payload, products) {
   const tax = payload.taxEnabled ? Math.round(taxable * 0.11) : 0;
   const total = taxable + tax;
 
-  return { items, subtotal, discount, tax, total };
+  return { items, subtotal, discount, discountType, tax, total };
 }
 
 async function appendAnalytics(order) {
@@ -142,16 +142,75 @@ async function appendAnalytics(order) {
   await sheets.appendRows(ANALYTICS_RANGE, [[dateKey, order.total, 1, seller.name]]);
 }
 
+function formatSheetDateTime(isoDate) {
+  const value = new Date(isoDate);
+  const day = String(value.getDate()).padStart(2, "0");
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const year = value.getFullYear();
+  const hours = String(value.getHours()).padStart(2, "0");
+  const minutes = String(value.getMinutes()).padStart(2, "0");
+  const seconds = String(value.getSeconds()).padStart(2, "0");
+  return {
+    date: `${day}:${month}:${year}`,
+    time: `${hours}:${minutes}:${seconds}`
+  };
+}
+
+function parseSheetDateTime(date, time) {
+  const dateText = String(date || "");
+  const timeText = String(time || "00:00:00");
+  if (/^\d{2}:\d{2}:\d{4}$/.test(dateText)) {
+    const [day, month, year] = dateText.split(":");
+    const [hours = "00", minutes = "00", seconds = "00"] = timeText.split(":");
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes), Number(seconds)).toISOString();
+  }
+  return dateText;
+}
+
 function normalizeOrderObject(order) {
   return {
     orderID: order.orderID,
-    date: order.date,
+    date: order.date || parseSheetDateTime(order.sheetDate, order.time),
+    time: order.time || "",
     items: Array.isArray(order.items) ? order.items : order.items ? JSON.parse(order.items) : [],
     subtotal: Number(order.subtotal || 0),
     discount: Number(order.discount || 0),
+    discountType: order.discountType || "",
     tax: Number(order.tax || 0),
     total: Number(order.total || 0),
     paymentMethod: order.paymentMethod
+  };
+}
+
+function normalizeOrderRow(row) {
+  if (row.length >= 10) {
+    const [orderID, sheetDate, time, items, subtotal, discount, discountType, tax, total, paymentMethod] = row;
+    return {
+      orderID,
+      date: parseSheetDateTime(sheetDate, time),
+      time,
+      items: items ? JSON.parse(items) : [],
+      subtotal: Number(subtotal || 0),
+      discount: Number(discount || 0),
+      discountType,
+      tax: Number(tax || 0),
+      total: Number(total || 0),
+      paymentMethod
+    };
+  }
+
+  const [orderID, date, items, subtotal, discount, tax, total, paymentMethod] = row;
+  return {
+    orderID,
+    date,
+    time: "",
+    items: items ? JSON.parse(items) : [],
+    subtotal: Number(subtotal || 0),
+    discount: Number(discount || 0),
+    discountType: "",
+    tax: Number(tax || 0),
+    total: Number(total || 0),
+    paymentMethod
   };
 }
 
@@ -164,16 +223,7 @@ async function loadOrders() {
   const rows = await sheets.getRows(ORDERS_RANGE);
   return rows
     .filter((row) => row[0])
-    .map(([orderID, date, items, subtotal, discount, tax, total, paymentMethod]) => ({
-      orderID,
-      date,
-      items: items ? JSON.parse(items) : [],
-      subtotal: Number(subtotal || 0),
-      discount: Number(discount || 0),
-      tax: Number(tax || 0),
-      total: Number(total || 0),
-      paymentMethod
-    }))
+    .map(normalizeOrderRow)
     .reverse();
 }
 
@@ -183,7 +233,19 @@ async function saveOrder(order) {
     return;
   }
 
-  await sheets.appendRows(ORDERS_RANGE, [[order.orderID, order.date, formatOrderItems(order.items), order.subtotal, order.discount, order.tax, order.total, order.paymentMethod]]);
+  const sheetDateTime = formatSheetDateTime(order.date);
+  await sheets.appendRows(ORDERS_RANGE, [[
+    order.orderID,
+    sheetDateTime.date,
+    sheetDateTime.time,
+    formatOrderItems(order.items),
+    order.subtotal,
+    order.discount,
+    order.discountType,
+    order.tax,
+    order.total,
+    order.paymentMethod
+  ]]);
   await appendAnalytics(order);
 }
 
@@ -229,7 +291,7 @@ async function handleApi(req, res, url) {
         PRODUCT_HEADERS,
         ...AKRAL_PRODUCTS.map((product) => [product.id, product.name, product.category, product.variablePrice ? "variable" : product.price, product.imageURL])
       ]);
-      await sheets.updateRows("Orders!A1:H", [ORDER_HEADERS]);
+      await sheets.updateRows("Orders!A1:J", [ORDER_HEADERS]);
       await sheets.updateRows("Analytics!A1:D", [ANALYTICS_HEADERS]);
       sendJson(res, 200, { ok: true, products: AKRAL_PRODUCTS.length });
       return;

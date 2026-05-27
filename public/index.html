@@ -80,6 +80,7 @@
                 <button class="payment" data-payment="QRIS">QRIS</button>
                 <button class="payment" data-payment="Transfer">Transfer</button>
               </div>
+              <button class="ghost-button qris-button hidden" id="showQrisButton">Show QRIS</button>
               <label class="cash-field" id="cashField">
                 <span>Cash received</span>
                 <input id="cashReceived" type="number" min="0" inputmode="numeric" placeholder="0">
@@ -103,7 +104,14 @@
           </div>
           <div class="history-tools">
             <input id="historySearch" type="search" placeholder="Search order number">
-            <input id="historyDate" type="date">
+            <label>
+              <span>Start date</span>
+              <input id="historyStartDate" type="date">
+            </label>
+            <label>
+              <span>End date</span>
+              <input id="historyEndDate" type="date">
+            </label>
           </div>
           <div class="summary-strip">
             <div><span>Daily sales</span><strong id="dailySales">Rp0</strong></div>
@@ -140,7 +148,7 @@
           <div class="metric-grid dashboard-metrics" id="dashboardMetrics">
             <div class="metric-card"><span>Sales</span><strong id="salesMetric">Rp0</strong></div>
             <div class="metric-card"><span>Order</span><strong id="orderMetric">0</strong></div>
-            <div class="metric-card"><span>Cup Sales</span><strong id="cupSalesMetric">0 cups</strong></div>
+            <div class="metric-card"><span>Item Sales</span><strong id="cupSalesMetric">0 items</strong></div>
             <div class="metric-card"><span>Best Seller</span><strong id="bestSellerMetric">-</strong></div>
             <div class="metric-card"><span>Top Category</span><strong id="topCategoryMetric">-</strong></div>
           </div>
@@ -177,7 +185,7 @@
           <section class="chart-panel menu-sold-panel">
             <div class="panel-head">
               <h3>Menu Sold Count</h3>
-              <span id="menuSoldTotal">0 cups</span>
+              <span id="menuSoldTotal">0 items</span>
             </div>
             <div class="menu-sold-list" id="menuSoldList"></div>
           </section>
@@ -198,6 +206,12 @@
                   <option value="price-desc">Price high-low</option>
                   <option value="price-asc">Price low-high</option>
                 </select>
+                <select id="orderLogPageSize" aria-label="Rows per page">
+                  <option value="20">20 rows</option>
+                  <option value="50">50 rows</option>
+                  <option value="100">100 rows</option>
+                </select>
+                <button class="ghost-button" id="downloadOrderLogCsv">Download CSV</button>
               </div>
             </div>
             <div class="order-table-wrap">
@@ -254,6 +268,17 @@
         <h2>Order saved</h2>
         <p id="confirmText"></p>
         <button class="primary-button" id="closeConfirmButton">Done</button>
+      </div>
+    </dialog>
+
+    <dialog class="modal" id="qrisModal">
+      <div class="modal-card qris-card">
+        <div class="panel-head">
+          <h2>QRIS Payment</h2>
+          <button class="ghost-button" id="closeQrisButton">Close</button>
+        </div>
+        <img src="/assets/qris.jpg" alt="Akral QRIS payment code">
+        <p>Show this QRIS code to the customer.</p>
       </div>
     </dialog>
 

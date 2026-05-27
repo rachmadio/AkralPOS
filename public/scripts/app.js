@@ -7,11 +7,14 @@ const state = {
   pendingManualProduct: null,
   isCheckingOut: false,
   dashboardPage: 1,
-  dashboardPageSize: 12,
+  dashboardPageSize: 20,
   dashboardSort: "date-desc",
   dashboardLoading: false,
   dashboardDatesInitialized: false,
-  dashboardDayMap: new Map()
+  historyDatesInitialized: false,
+  doneOrderIds: new Set(),
+  dashboardDayMap: new Map(),
+  dashboardOrderRows: []
 };
 
 const rupiah = new Intl.NumberFormat("id-ID", {
@@ -63,6 +66,20 @@ function todayKey() {
   return dateKey(new Date());
 }
 
+function loadDoneOrderIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("akralDoneOrders") || "[]"));
+  } catch (error) {
+    return new Set();
+  }
+}
+
+function saveDoneOrderIds() {
+  localStorage.setItem("akralDoneOrders", JSON.stringify(Array.from(state.doneOrderIds)));
+}
+
+state.doneOrderIds = loadDoneOrderIds();
+
 function showToast(message) {
   $("#toast").textContent = message;
   $("#toast").classList.remove("hidden");
@@ -75,6 +92,13 @@ function initializeDashboardDates() {
   $("#dashboardStartDate").value = startOfCurrentMonthKey();
   $("#dashboardEndDate").value = todayKey();
   state.dashboardDatesInitialized = true;
+}
+
+function initializeHistoryDates() {
+  if (state.historyDatesInitialized) return;
+  $("#historyStartDate").value = startOfCurrentMonthKey();
+  $("#historyEndDate").value = todayKey();
+  state.historyDatesInitialized = true;
 }
 
 function setDashboardLoading(isLoading) {
@@ -246,6 +270,7 @@ function resetOrder() {
   $$(".payment").forEach((button) => button.classList.toggle("active", button.dataset.payment === "Cash"));
   $("#cashField").classList.remove("hidden");
   $("#changeLine").classList.remove("hidden");
+  $("#showQrisButton").classList.add("hidden");
   renderCart();
 }
 
@@ -286,29 +311,51 @@ function orderDate(order) {
 
 function filteredOrders() {
   const search = $("#historySearch").value.trim().toLowerCase();
-  const date = $("#historyDate").value;
+  const start = $("#historyStartDate").value || startOfCurrentMonthKey();
+  const end = $("#historyEndDate").value || todayKey();
+  const startValue = start <= end ? start : end;
+  const endValue = start <= end ? end : start;
   return state.orders.filter((order) => {
-    const matchesSearch = !search || order.orderID.toLowerCase().includes(search);
-    const matchesDate = !date || orderDate(order).toISOString().slice(0, 10) === date;
+    const orderItemsText = order.items.map((item) => item.name).join(" ").toLowerCase();
+    const orderKey = dateKey(order.date);
+    const matchesSearch = !search || order.orderID.toLowerCase().includes(search) || orderItemsText.includes(search);
+    const matchesDate = orderKey >= startValue && orderKey <= endValue;
     return matchesSearch && matchesDate;
   });
 }
 
 function renderHistory() {
+  initializeHistoryDates();
   const orders = filteredOrders();
   $("#ordersList").innerHTML = orders.length
     ? orders
         .map(
-          (order) => `
-            <article class="order-row">
+          (order) => {
+            const isDone = state.doneOrderIds.has(order.orderID);
+            const hasDiscount = Number(order.discount || 0) > 0;
+            const hasTax = Number(order.tax || 0) > 0;
+            return `
+            <article class="order-row ${isDone ? "is-done" : ""}">
               <div>
-                <strong>${escapeHTML(order.orderID)}</strong>
+                <div class="history-order-title">
+                  <strong>${escapeHTML(order.orderID)}</strong>
+                  <span class="status-pill ${isDone ? "done" : "pending"}">${isDone ? "Done" : "Pending"}</span>
+                </div>
                 <p>${orderDate(order).toLocaleString("id-ID")} · ${order.paymentMethod}</p>
                 <p>${order.items.map((item) => `${item.quantity}x ${escapeHTML(item.name)}`).join(", ")}</p>
+                <div class="history-badges">
+                  ${hasDiscount ? `<span>Discount ${formatIDR(order.discount)}</span>` : ""}
+                  ${hasTax ? `<span>Tax ${formatIDR(order.tax)}</span>` : ""}
+                  ${!hasDiscount && !hasTax ? `<span>No discount/tax</span>` : ""}
+                </div>
               </div>
-              <strong>${formatIDR(order.total)}</strong>
+              <div class="history-order-actions">
+                <strong>${formatIDR(order.total)}</strong>
+                <button class="ghost-button done-toggle" data-done-order-id="${escapeHTML(order.orderID)}">${isDone ? "Mark pending" : "Mark done"}</button>
+              </div>
             </article>
-          `
+          `;
+          }
         )
         .join("")
     : `<div class="empty-cart">No orders found</div>`;
@@ -352,6 +399,25 @@ function orderItems(order) {
   return Array.isArray(order.items) ? order.items : [];
 }
 
+function splitAmountByLine(total, lineTotals) {
+  const amount = Math.round(Number(total || 0));
+  const subtotal = lineTotals.reduce((sum, value) => sum + value, 0);
+  if (!amount || !subtotal || !lineTotals.length) return lineTotals.map(() => 0);
+
+  const raw = lineTotals.map((value) => (amount * value) / subtotal);
+  const split = raw.map(Math.floor);
+  let remainder = amount - split.reduce((sum, value) => sum + value, 0);
+  raw
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction)
+    .forEach(({ index }) => {
+      if (remainder <= 0) return;
+      split[index] += 1;
+      remainder -= 1;
+    });
+  return split;
+}
+
 function buildDashboardData(orders) {
   const days = new Map();
   const items = new Map();
@@ -369,7 +435,7 @@ function buildDashboardData(orders) {
         dateKey: key,
         totalRevenue: 0,
         orders: 0,
-        cups: 0,
+        items: 0,
         categories: { Coffee: 0, "Non Coffee": 0, Food: 0 }
       });
     }
@@ -377,17 +443,27 @@ function buildDashboardData(orders) {
     const day = days.get(key);
     day.totalRevenue += Number(order.total || 0);
     day.orders += 1;
+    const preparedItems = orderItems(order).map((item) => ({
+      ...item,
+      quantity: Number(item.quantity || 0),
+      lineTotal: Number(item.price || 0) * Number(item.quantity || 0)
+    }));
+    const lineTotals = preparedItems.map((item) => item.lineTotal);
+    const splitDiscounts = splitAmountByLine(order.discount, lineTotals);
+    const splitTaxes = splitAmountByLine(order.tax, lineTotals);
 
-    orderItems(order).forEach((item) => {
+    preparedItems.forEach((item, index) => {
       const category = normalizeCategory(item.category);
-      const quantity = Number(item.quantity || 0);
-      const lineTotal = Number(item.price || 0) * quantity;
-      day.cups += quantity;
-      day.categories[category] += lineTotal;
+      const quantity = item.quantity;
+      const lineDiscount = splitDiscounts[index];
+      const lineTax = splitTaxes[index];
+      const netPrice = Math.max(0, item.lineTotal - lineDiscount + lineTax);
+      day.items += quantity;
+      day.categories[category] += netPrice;
 
       const categoryStats = categories.get(category) || { quantity: 0, revenue: 0 };
       categoryStats.quantity += quantity;
-      categoryStats.revenue += lineTotal;
+      categoryStats.revenue += netPrice;
       categories.set(category, categoryStats);
 
       const itemStats = items.get(item.name) || { name: item.name, quantity: 0 };
@@ -399,9 +475,9 @@ function buildDashboardData(orders) {
         date: order.date,
         itemName: item.name,
         quantity,
-        discount: Number(order.discount || 0),
-        tax: Number(order.tax || 0),
-        price: lineTotal,
+        discount: lineDiscount,
+        tax: lineTax,
+        price: netPrice,
         category
       });
     });
@@ -422,20 +498,20 @@ function renderDashboard() {
   const data = buildDashboardData(orders);
   state.dashboardDayMap = new Map(data.days.map((day) => [day.dateKey, day]));
   const totalSales = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
-  const cupSales = data.items.reduce((sum, item) => sum + item.quantity, 0);
+  const itemSales = data.items.reduce((sum, item) => sum + item.quantity, 0);
   const bestSeller = data.items[0];
   const topCategory = Array.from(data.categories.entries()).sort((a, b) => b[1].quantity - a[1].quantity)[0];
 
   $("#salesMetric").textContent = formatIDR(totalSales);
   $("#orderMetric").textContent = orders.length;
-  $("#cupSalesMetric").textContent = `${cupSales} cups`;
+  $("#cupSalesMetric").textContent = `${itemSales} items`;
   $("#bestSellerMetric").textContent = bestSeller ? `${bestSeller.name} - ${bestSeller.quantity}` : "-";
   $("#topCategoryMetric").textContent = topCategory && topCategory[1].quantity ? topCategory[0] : "-";
   $("#dashboardRangeLabel").textContent = `${formatChartDate($("#dashboardStartDate").value)} - ${formatChartDate($("#dashboardEndDate").value)}`;
 
   renderRevenueChart(data.days);
   renderCategoryChart(data.categories);
-  renderMenuSoldCount(data.items, cupSales);
+  renderMenuSoldCount(data.items, itemSales);
   renderOrderLog(data.rows);
 }
 
@@ -486,11 +562,14 @@ function showChartTooltip(event, day) {
     <div><span>Total revenue</span><b>${formatIDR(day.totalRevenue)}</b></div>
     <div><span>Coffee revenue</span><b>${formatIDR(day.categories.Coffee)}</b></div>
     <div><span>Non Coffee revenue</span><b>${formatIDR(day.categories["Non Coffee"])}</b></div>
+    <div><span>Food revenue</span><b>${formatIDR(day.categories.Food)}</b></div>
     <div><span>Orders</span><b>${day.orders}</b></div>
-    <div><span>Cups sold</span><b>${day.cups}</b></div>
+    <div><span>Items sold</span><b>${day.items}</b></div>
   `;
-  tooltip.style.left = `${event.clientX}px`;
-  tooltip.style.top = `${event.clientY}px`;
+  const left = Math.min(event.clientX, window.innerWidth - 260);
+  const top = Math.min(event.clientY, window.innerHeight - 230);
+  tooltip.style.left = `${Math.max(8, left)}px`;
+  tooltip.style.top = `${Math.max(8, top)}px`;
   tooltip.classList.remove("hidden");
 }
 
@@ -505,7 +584,7 @@ function renderCategoryChart(categoryStats) {
     .map(
       ([category, stats]) => `
         <div class="category-line">
-          <span>${escapeHTML(category)} · ${stats.quantity} cups · ${formatIDR(stats.revenue)}</span>
+          <span>${escapeHTML(category)} · ${stats.quantity} items · ${formatIDR(stats.revenue)}</span>
           <div><i style="width:${(stats.quantity / max) * 100}%"></i></div>
         </div>
       `
@@ -513,8 +592,8 @@ function renderCategoryChart(categoryStats) {
     .join("");
 }
 
-function renderMenuSoldCount(items, totalCups) {
-  $("#menuSoldTotal").textContent = `${totalCups} cups`;
+function renderMenuSoldCount(items, totalItems) {
+  $("#menuSoldTotal").textContent = `${totalItems} items`;
   if (!items.length) {
     $("#menuSoldList").innerHTML = `<div class="empty-cart">No menu sold in this range</div>`;
     return;
@@ -553,6 +632,7 @@ function filteredOrderRows(rows) {
 
 function renderOrderLog(rows) {
   const filtered = filteredOrderRows(rows);
+  state.dashboardOrderRows = filtered;
   const totalPages = Math.max(1, Math.ceil(filtered.length / state.dashboardPageSize));
   state.dashboardPage = Math.min(state.dashboardPage, totalPages);
   const start = (state.dashboardPage - 1) * state.dashboardPageSize;
@@ -567,19 +647,55 @@ function renderOrderLog(rows) {
         .map(
           (row) => `
             <tr>
-              <td>${escapeHTML(row.orderID)}</td>
-              <td>${orderDate(row).toLocaleDateString("id-ID")}</td>
-              <td>${escapeHTML(row.itemName)}</td>
-              <td>${row.quantity}</td>
-              <td>${formatIDR(row.discount)}</td>
-              <td>${formatIDR(row.tax)}</td>
-              <td>${formatIDR(row.price)}</td>
-              <td>${escapeHTML(row.category)}</td>
+              <td data-label="Order ID">${escapeHTML(row.orderID)}</td>
+              <td data-label="Date">${orderDate(row).toLocaleDateString("id-ID")}</td>
+              <td data-label="Items">${escapeHTML(row.itemName)}</td>
+              <td data-label="Quantity">${row.quantity}</td>
+              <td data-label="Discount">${formatIDR(row.discount)}</td>
+              <td data-label="Tax">${formatIDR(row.tax)}</td>
+              <td data-label="Price">${formatIDR(row.price)}</td>
+              <td data-label="Category">${escapeHTML(row.category)}</td>
             </tr>
           `
         )
         .join("")
     : `<tr><td colspan="8">No order records in this range</td></tr>`;
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadOrderLogCsv() {
+  const rows = state.dashboardOrderRows || [];
+  const headers = ["Order ID", "Date", "Items", "Quantity", "Discount", "Tax", "Price", "Category"];
+  const csv = [
+    headers.map(csvCell).join(","),
+    ...rows.map((row) =>
+      [
+        row.orderID,
+        orderDate(row).toLocaleDateString("id-ID"),
+        row.itemName,
+        row.quantity,
+        row.discount,
+        row.tax,
+        row.price,
+        row.category
+      ]
+        .map(csvCell)
+        .join(",")
+    )
+  ].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `akral-order-log-${$("#dashboardStartDate").value || "start"}-${$("#dashboardEndDate").value || "end"}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function loadOrders() {
@@ -669,15 +785,29 @@ function bindEvents() {
       const isCash = state.paymentMethod === "Cash";
       $("#cashField").classList.toggle("hidden", !isCash);
       $("#changeLine").classList.toggle("hidden", !isCash);
+      $("#showQrisButton").classList.toggle("hidden", state.paymentMethod !== "QRIS");
     });
   });
 
   $("#checkoutButton").addEventListener("click", () => checkout().catch((error) => showToast(error.message)));
   $("#closeConfirmButton").addEventListener("click", () => $("#confirmModal").close());
+  $("#showQrisButton").addEventListener("click", () => $("#qrisModal").showModal());
+  $("#closeQrisButton").addEventListener("click", () => $("#qrisModal").close());
   $("#refreshHistoryButton").addEventListener("click", loadOrders);
   $("#refreshDashboardButton").addEventListener("click", loadOrders);
   $("#historySearch").addEventListener("input", renderHistory);
-  $("#historyDate").addEventListener("input", renderHistory);
+  ["historyStartDate", "historyEndDate"].forEach((id) => {
+    $(`#${id}`).addEventListener("input", renderHistory);
+  });
+  $("#ordersList").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-done-order-id]");
+    if (!button) return;
+    const orderID = button.dataset.doneOrderId;
+    if (state.doneOrderIds.has(orderID)) state.doneOrderIds.delete(orderID);
+    else state.doneOrderIds.add(orderID);
+    saveDoneOrderIds();
+    renderHistory();
+  });
   ["dashboardStartDate", "dashboardEndDate"].forEach((id) => {
     $(`#${id}`).addEventListener("input", () => {
       state.dashboardPage = 1;
@@ -693,6 +823,12 @@ function bindEvents() {
     state.dashboardPage = 1;
     renderDashboard();
   });
+  $("#orderLogPageSize").addEventListener("change", (event) => {
+    state.dashboardPageSize = Number(event.target.value);
+    state.dashboardPage = 1;
+    renderDashboard();
+  });
+  $("#downloadOrderLogCsv").addEventListener("click", downloadOrderLogCsv);
   $("#orderLogPrev").addEventListener("click", () => {
     state.dashboardPage = Math.max(1, state.dashboardPage - 1);
     renderDashboard();
@@ -714,6 +850,7 @@ function bindEvents() {
 }
 
 bindEvents();
+initializeHistoryDates();
 initializeDashboardDates();
 loadProducts();
 loadOrders();
