@@ -58,7 +58,11 @@ When `GOOGLE_APPS_SCRIPT_URL` is set, the app uses Apps Script instead of servic
    - `Orders`
    - `Analytics`
 3. Go to `Extensions > Apps Script`.
-4. Paste this script:
+4. Paste the latest script from `google-apps-script/Code.gs`. That file is the source of truth for the Apps Script Web App, including `Status`, split `Date`/`Time`, and `DiscountType`.
+
+Important: do not copy older Apps Script snippets from chat history or old README versions. Older sync code cleared the `Orders` and `Analytics` tabs. The current `syncProducts` only refreshes the product menu and preserves transaction data.
+
+Legacy reference only, do not use:
 
 ```js
 const SHEETS = {
@@ -291,8 +295,8 @@ https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
 
 `Orders`
 
-| OrderID | Date | Time | Items | Subtotal | Discount | DiscountType | Tax | Total | PaymentMethod |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OrderID | Date | Time | Items | Subtotal | Discount | DiscountType | Tax | Total | PaymentMethod | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 `Analytics`
 
@@ -307,11 +311,13 @@ After `.env` is configured, start the app:
 npm start
 ```
 
-Then run this once to write the Products, Orders, and Analytics headers plus Akral menu items to Google Sheets:
+Then run this once to write the Products menu to Google Sheets:
 
 ```bash
 curl -X POST http://localhost:4173/api/setup/sync-products
 ```
+
+This does not clear existing orders when using the latest Apps Script from `google-apps-script/Code.gs`.
 
 The starter product catalog is based on the menu you provided:
 

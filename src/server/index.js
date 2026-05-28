@@ -12,7 +12,7 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const PUBLIC_DIR = path.resolve(process.cwd(), "public");
 const PRODUCTS_RANGE = process.env.GOOGLE_SHEETS_PRODUCTS_RANGE || "Products!A2:E";
-const ORDERS_RANGE = process.env.GOOGLE_SHEETS_ORDERS_RANGE || "Orders!A2:J";
+const ORDERS_RANGE = process.env.GOOGLE_SHEETS_ORDERS_RANGE || "Orders!A2:K";
 const ANALYTICS_RANGE = process.env.GOOGLE_SHEETS_ANALYTICS_RANGE || "Analytics!A2:D";
 const ALLOW_LOCAL_MENU_FALLBACK = process.env.ALLOW_LOCAL_MENU_FALLBACK === "true";
 
@@ -151,51 +151,64 @@ function formatSheetDateTime(isoDate) {
   const minutes = String(value.getMinutes()).padStart(2, "0");
   const seconds = String(value.getSeconds()).padStart(2, "0");
   return {
-    date: `${day}:${month}:${year}`,
+    date: `${day}-${month}-${year}`,
     time: `${hours}:${minutes}:${seconds}`
   };
 }
 
 function parseSheetDateTime(date, time) {
   const dateText = String(date || "");
-  const timeText = String(time || "00:00:00");
-  if (/^\d{2}:\d{2}:\d{4}$/.test(dateText)) {
-    const [day, month, year] = dateText.split(":");
+  const timeText = String(time || "00:00:00").replace(/\./g, ":");
+  if (/^\d{1,2}[-:/]\d{1,2}[-:/]\d{4}/.test(dateText)) {
+    const [day, month, year] = dateText.split(/[-:/]/);
     const [hours = "00", minutes = "00", seconds = "00"] = timeText.split(":");
     return new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes), Number(seconds)).toISOString();
   }
   return dateText;
 }
 
+function sheetDiscountType(discountType) {
+  if (discountType === "percentage" || discountType === "%") return "%";
+  if (discountType === "fixed" || discountType === "Rp") return "Rp";
+  return "";
+}
+
 function normalizeOrderObject(order) {
   return {
     orderID: order.orderID,
-    date: order.date || parseSheetDateTime(order.sheetDate, order.time),
+    date: normalizeOrderDate(order.date || parseSheetDateTime(order.sheetDate, order.time), order.time),
     time: order.time || "",
     items: Array.isArray(order.items) ? order.items : order.items ? JSON.parse(order.items) : [],
-    subtotal: Number(order.subtotal || 0),
-    discount: Number(order.discount || 0),
+    subtotal: numericValue(order.subtotal),
+    discount: numericValue(order.discount),
     discountType: order.discountType || "",
-    tax: Number(order.tax || 0),
-    total: Number(order.total || 0),
-    paymentMethod: order.paymentMethod
+    tax: numericValue(order.tax),
+    total: numericValue(order.total),
+    paymentMethod: order.paymentMethod,
+    status: order.status || "Pending"
   };
 }
 
+function normalizeOrderDate(date, time) {
+  return parseSheetDateTime(date, time) || date;
+}
+
 function normalizeOrderRow(row) {
-  if (row.length >= 10) {
-    const [orderID, sheetDate, time, items, subtotal, discount, discountType, tax, total, paymentMethod] = row;
+  const hasSplitDateTime = looksLikeItems(row[3]) || /^\d{1,2}:\d{2}(:\d{2})?$/.test(String(row[2] || ""));
+  if (hasSplitDateTime) {
+    const [orderID, sheetDate, time, items, subtotal, discount, discountType, tax, total, paymentMethod, status] = row;
     return {
       orderID,
       date: parseSheetDateTime(sheetDate, time),
       time,
       items: items ? JSON.parse(items) : [],
-      subtotal: Number(subtotal || 0),
-      discount: Number(discount || 0),
+      subtotal: numericValue(subtotal),
+      discount: numericValue(discount),
       discountType,
-      tax: Number(tax || 0),
-      total: Number(total || 0),
-      paymentMethod
+      tax: numericValue(tax),
+      total: numericValue(total),
+      paymentMethod,
+      status: status || "Pending"
     };
   }
 
@@ -205,13 +218,25 @@ function normalizeOrderRow(row) {
     date,
     time: "",
     items: items ? JSON.parse(items) : [],
-    subtotal: Number(subtotal || 0),
-    discount: Number(discount || 0),
+    subtotal: numericValue(subtotal),
+    discount: numericValue(discount),
     discountType: "",
-    tax: Number(tax || 0),
-    total: Number(total || 0),
-    paymentMethod
+    tax: numericValue(tax),
+    total: numericValue(total),
+    paymentMethod,
+    status: "Pending"
   };
+}
+
+function looksLikeItems(value) {
+  const text = String(value || "").trim();
+  return text.startsWith("[") || text.startsWith("{");
+}
+
+function numericValue(value) {
+  if (typeof value === "number") return value;
+  const cleaned = String(value || "").replace(/[^\d.-]/g, "");
+  return Number(cleaned || 0);
 }
 
 async function loadOrders() {
@@ -241,12 +266,28 @@ async function saveOrder(order) {
     formatOrderItems(order.items),
     order.subtotal,
     order.discount,
-    order.discountType,
+    sheetDiscountType(order.discountType),
     order.tax,
     order.total,
-    order.paymentMethod
+    order.paymentMethod,
+    order.status || "Pending"
   ]]);
   await appendAnalytics(order);
+}
+
+async function updateOrderStatus(orderID, status) {
+  const normalizedStatus = status === "Done" ? "Done" : "Pending";
+
+  if (appsScript.hasAppsScriptConfig()) {
+    await appsScript.updateOrderStatus(orderID, normalizedStatus);
+    return { orderID, status: normalizedStatus };
+  }
+
+  const rows = await sheets.getRows(ORDERS_RANGE);
+  const rowIndex = rows.findIndex((row) => row[0] === orderID);
+  if (rowIndex === -1) throw new Error("Order not found.");
+  await sheets.updateRows(`Orders!K${rowIndex + 2}`, [[normalizedStatus]]);
+  return { orderID, status: normalizedStatus };
 }
 
 async function handleApi(req, res, url) {
@@ -291,8 +332,7 @@ async function handleApi(req, res, url) {
         PRODUCT_HEADERS,
         ...AKRAL_PRODUCTS.map((product) => [product.id, product.name, product.category, product.variablePrice ? "variable" : product.price, product.imageURL])
       ]);
-      await sheets.updateRows("Orders!A1:J", [ORDER_HEADERS]);
-      await sheets.updateRows("Analytics!A1:D", [ANALYTICS_HEADERS]);
+      await sheets.updateRows("Orders!A1:K", [ORDER_HEADERS]);
       sendJson(res, 200, { ok: true, products: AKRAL_PRODUCTS.length });
       return;
     }
@@ -310,10 +350,18 @@ async function handleApi(req, res, url) {
       const orderID = `AKR-${Date.now().toString(36).toUpperCase()}`;
       const date = new Date().toISOString();
       const paymentMethod = ["Cash", "QRIS", "Transfer"].includes(payload.paymentMethod) ? payload.paymentMethod : "Cash";
-      const order = { orderID, date, paymentMethod, ...calculated };
+      const order = { orderID, date, paymentMethod, status: "Pending", ...calculated };
 
       await saveOrder(order);
       sendJson(res, 201, { order });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/orders/status") {
+      const payload = await readBody(req);
+      if (!payload.orderID) throw new Error("OrderID is required.");
+      const result = await updateOrderStatus(payload.orderID, payload.status);
+      sendJson(res, 200, { ok: true, ...result });
       return;
     }
 

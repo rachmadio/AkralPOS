@@ -12,7 +12,6 @@ const state = {
   dashboardLoading: false,
   dashboardDatesInitialized: false,
   historyDatesInitialized: false,
-  doneOrderIds: new Set(),
   dashboardDayMap: new Map(),
   dashboardOrderRows: []
 };
@@ -43,12 +42,29 @@ function formatIDR(value) {
 }
 
 function dateKey(date) {
-  const value = new Date(date);
+  const value = parseAppDate(date);
   if (Number.isNaN(value.getTime())) return "";
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function parseAppDate(date) {
+  if (date instanceof Date) return date;
+  const text = String(date || "");
+  const splitDate = text.match(/^(\d{1,2})[-:\/](\d{1,2})[-:\/](\d{4})(?:[,\sT]+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?/);
+  if (splitDate) {
+    return new Date(
+      Number(splitDate[3]),
+      Number(splitDate[2]) - 1,
+      Number(splitDate[1]),
+      Number(splitDate[4] || 0),
+      Number(splitDate[5] || 0),
+      Number(splitDate[6] || 0)
+    );
+  }
+  return new Date(text);
 }
 
 function formatChartDate(key) {
@@ -65,20 +81,6 @@ function startOfCurrentMonthKey() {
 function todayKey() {
   return dateKey(new Date());
 }
-
-function loadDoneOrderIds() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem("akralDoneOrders") || "[]"));
-  } catch (error) {
-    return new Set();
-  }
-}
-
-function saveDoneOrderIds() {
-  localStorage.setItem("akralDoneOrders", JSON.stringify(Array.from(state.doneOrderIds)));
-}
-
-state.doneOrderIds = loadDoneOrderIds();
 
 function showToast(message) {
   $("#toast").textContent = message;
@@ -317,7 +319,7 @@ async function checkout() {
 }
 
 function orderDate(order) {
-  return new Date(order.date);
+  return parseAppDate(order.date);
 }
 
 function filteredOrders() {
@@ -342,7 +344,7 @@ function renderHistory() {
     ? orders
         .map(
           (order) => {
-            const isDone = state.doneOrderIds.has(order.orderID);
+            const isDone = order.status === "Done";
             const hasDiscount = Number(order.discount || 0) > 0;
             const hasTax = Number(order.tax || 0) > 0;
             return `
@@ -714,8 +716,11 @@ async function loadOrders() {
   try {
     const data = await api("/api/orders");
     state.orders = data.orders || [];
+    $("#setupWarning").classList.add("hidden");
   } catch (error) {
     state.orders = [];
+    $("#setupWarning").textContent = `Could not load orders: ${error.message}`;
+    $("#setupWarning").classList.remove("hidden");
   } finally {
     setDashboardLoading(false);
   }
@@ -814,10 +819,21 @@ function bindEvents() {
     const button = event.target.closest("[data-done-order-id]");
     if (!button) return;
     const orderID = button.dataset.doneOrderId;
-    if (state.doneOrderIds.has(orderID)) state.doneOrderIds.delete(orderID);
-    else state.doneOrderIds.add(orderID);
-    saveDoneOrderIds();
-    renderHistory();
+    const order = state.orders.find((item) => item.orderID === orderID);
+    const nextStatus = order && order.status === "Done" ? "Pending" : "Done";
+    button.disabled = true;
+    api("/api/orders/status", {
+      method: "POST",
+      body: JSON.stringify({ orderID, status: nextStatus })
+    })
+      .then((result) => {
+        state.orders = state.orders.map((item) => (item.orderID === orderID ? { ...item, status: result.status } : item));
+        renderHistory();
+      })
+      .catch((error) => showToast(error.message))
+      .finally(() => {
+        button.disabled = false;
+      });
   });
   ["dashboardStartDate", "dashboardEndDate"].forEach((id) => {
     $(`#${id}`).addEventListener("input", () => {

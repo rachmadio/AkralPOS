@@ -93,6 +93,18 @@ async function createOrder(order) {
   );
 }
 
+async function updateOrderStatus(orderID, status) {
+  return requestJson(
+    process.env.GOOGLE_APPS_SCRIPT_URL,
+    { method: "POST" },
+    {
+      action: "updateOrderStatus",
+      orderID,
+      status
+    }
+  );
+}
+
 async function syncProducts(products, headers) {
   return requestJson(
     process.env.GOOGLE_APPS_SCRIPT_URL,
@@ -110,5 +122,6 @@ module.exports = {
   getProducts,
   getOrders,
   createOrder,
+  updateOrderStatus,
   syncProducts
 };
