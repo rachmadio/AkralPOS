@@ -4,7 +4,7 @@ const SHEETS = {
   analytics: 'Analytics',
 };
 
-const ORDER_HEADERS = ['OrderID', 'Date', 'Time', 'Items', 'Subtotal', 'Discount', 'DiscountType', 'Tax', 'Total', 'PaymentMethod', 'Status'];
+const ORDER_HEADERS = ['OrderID', 'Date', 'Time', 'Items', 'Subtotal', 'Discount', 'DiscountType', 'Tax', 'Total', 'PaymentMethod', 'CustomerName', 'Status'];
 
 function doGet(e) {
   const action = e && e.parameter ? e.parameter.action : 'ping';
@@ -78,7 +78,7 @@ function getOrders() {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
 
-  return sheet.getRange(2, 1, lastRow - 1, 11).getDisplayValues()
+  return sheet.getRange(2, 1, lastRow - 1, 12).getDisplayValues()
     .filter(row => row[0])
     .map(row => {
       try {
@@ -95,7 +95,8 @@ function getOrders() {
           tax: numberValue(row[7] || row[5]),
           total: numberValue(row[8] || row[6]),
           paymentMethod: row[9] || row[7] || '',
-          status: row[10] || 'Pending',
+          customerName: isOrderStatus(row[10]) ? '' : row[10] || '',
+          status: isOrderStatus(row[10]) ? row[10] : row[11] || 'Pending',
           parseWarning: error.message,
         };
       }
@@ -118,7 +119,8 @@ function normalizeOrderRow(row) {
       tax: numberValue(row[7]),
       total: numberValue(row[8]),
       paymentMethod: row[9],
-      status: row[10] || 'Pending',
+      customerName: isOrderStatus(row[10]) ? '' : row[10] || '',
+      status: isOrderStatus(row[10]) ? row[10] : row[11] || 'Pending',
     };
   }
 
@@ -133,7 +135,8 @@ function normalizeOrderRow(row) {
     tax: numberValue(row[5]),
     total: numberValue(row[6]),
     paymentMethod: row[7],
-    status: 'Pending',
+    customerName: row[8] || '',
+    status: row[9] || 'Pending',
   };
 }
 
@@ -155,6 +158,7 @@ function createOrder(order) {
     order.tax,
     order.total,
     order.paymentMethod,
+    order.customerName || '',
     order.status || 'Pending',
   ]);
 
@@ -179,7 +183,7 @@ function updateOrderStatus(orderID, status) {
   const index = ids.findIndex(row => row[0] === orderID);
   if (index === -1) return { ok: false, error: 'Order not found' };
 
-  sheet.getRange(index + 2, 11).setValue(normalizedStatus);
+  sheet.getRange(index + 2, 12).setValue(normalizedStatus);
   return { ok: true, orderID, status: normalizedStatus };
 }
 
@@ -208,12 +212,12 @@ function migrateOrdersToV4() {
   const sheet = getOrCreateSheet(SHEETS.orders);
   const rows = sheet.getDataRange().getValues();
   if (!rows.length) {
-    sheet.getRange(1, 1, 1, 11).setValues([ORDER_HEADERS]);
+    sheet.getRange(1, 1, 1, 12).setValues([ORDER_HEADERS]);
     return { ok: true, migrated: 0 };
   }
 
   const header = rows[0];
-  if (header[2] === 'Time' && header[6] === 'DiscountType' && header[10] === 'Status') {
+  if (header[2] === 'Time' && header[6] === 'DiscountType' && header[10] === 'CustomerName' && header[11] === 'Status') {
     return { ok: true, migrated: 0 };
   }
 
@@ -233,7 +237,8 @@ function migrateOrdersToV4() {
         row[7],
         row[8],
         row[9],
-        row[10] || 'Pending',
+        isOrderStatus(row[10]) ? '' : row[10] || '',
+        isOrderStatus(row[10]) ? row[10] : row[11] || 'Pending',
       ]);
       return;
     }
@@ -250,19 +255,20 @@ function migrateOrdersToV4() {
       row[5],
       row[6],
       row[7],
+      '',
       'Pending',
     ]);
   });
 
   sheet.clear();
-  sheet.getRange(1, 1, migrated.length, 11).setValues(migrated);
+  sheet.getRange(1, 1, migrated.length, 12).setValues(migrated);
   return { ok: true, migrated: migrated.length - 1 };
 }
 
 function ensureOrdersHeader() {
   const sheet = getOrCreateSheet(SHEETS.orders);
-  const current = sheet.getRange(1, 1, 1, Math.max(11, sheet.getLastColumn())).getValues()[0];
-  if (current[2] === 'Time' && current[6] === 'DiscountType' && current[10] === 'Status') return;
+  const current = sheet.getRange(1, 1, 1, Math.max(12, sheet.getLastColumn())).getValues()[0];
+  if (current[2] === 'Time' && current[6] === 'DiscountType' && current[10] === 'CustomerName' && current[11] === 'Status') return;
   migrateOrdersToV4();
 }
 
@@ -370,6 +376,10 @@ function looksLikeItems(value) {
 function isTimeValue(value) {
   if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) return true;
   return /^\d{1,2}:\d{2}(:\d{2})?$/.test(String(value || ''));
+}
+
+function isOrderStatus(value) {
+  return value === 'Done' || value === 'Pending';
 }
 
 function numberValue(value) {

@@ -17,7 +17,7 @@ const AKRAL_PRODUCTS = [
 ];
 
 const PRODUCT_HEADERS = ["ID", "Name", "Category", "Price", "ImageURL"];
-const ORDER_HEADERS = ["OrderID", "Date", "Time", "Items", "Subtotal", "Discount", "DiscountType", "Tax", "Total", "PaymentMethod", "Status"];
+const ORDER_HEADERS = ["OrderID", "Date", "Time", "Items", "Subtotal", "Discount", "DiscountType", "Tax", "Total", "PaymentMethod", "CustomerName", "Status"];
 const ANALYTICS_HEADERS = ["Date", "Revenue", "Orders", "BestSeller"];
 
 module.exports = {

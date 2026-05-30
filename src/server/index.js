@@ -12,7 +12,7 @@ const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "127.0.0.1";
 const PUBLIC_DIR = path.resolve(process.cwd(), "public");
 const PRODUCTS_RANGE = process.env.GOOGLE_SHEETS_PRODUCTS_RANGE || "Products!A2:E";
-const ORDERS_RANGE = process.env.GOOGLE_SHEETS_ORDERS_RANGE || "Orders!A2:K";
+const ORDERS_RANGE = process.env.GOOGLE_SHEETS_ORDERS_RANGE || "Orders!A2:L";
 const ANALYTICS_RANGE = process.env.GOOGLE_SHEETS_ANALYTICS_RANGE || "Analytics!A2:D";
 const ALLOW_LOCAL_MENU_FALLBACK = process.env.ALLOW_LOCAL_MENU_FALLBACK === "true";
 
@@ -185,6 +185,7 @@ function normalizeOrderObject(order) {
     tax: numericValue(order.tax),
     total: numericValue(order.total),
     paymentMethod: order.paymentMethod,
+    customerName: order.customerName || "",
     status: order.status || "Pending"
   };
 }
@@ -196,7 +197,8 @@ function normalizeOrderDate(date, time) {
 function normalizeOrderRow(row) {
   const hasSplitDateTime = looksLikeItems(row[3]) || /^\d{1,2}:\d{2}(:\d{2})?$/.test(String(row[2] || ""));
   if (hasSplitDateTime) {
-    const [orderID, sheetDate, time, items, subtotal, discount, discountType, tax, total, paymentMethod, status] = row;
+    const [orderID, sheetDate, time, items, subtotal, discount, discountType, tax, total, paymentMethod, customerOrStatus, statusValue] = row;
+    const hasCustomerName = !isOrderStatus(customerOrStatus);
     return {
       orderID,
       date: parseSheetDateTime(sheetDate, time),
@@ -208,11 +210,12 @@ function normalizeOrderRow(row) {
       tax: numericValue(tax),
       total: numericValue(total),
       paymentMethod,
-      status: status || "Pending"
+      customerName: hasCustomerName ? customerOrStatus || "" : "",
+      status: hasCustomerName ? statusValue || "Pending" : customerOrStatus || "Pending"
     };
   }
 
-  const [orderID, date, items, subtotal, discount, tax, total, paymentMethod] = row;
+  const [orderID, date, items, subtotal, discount, tax, total, paymentMethod, customerName, status] = row;
   return {
     orderID,
     date,
@@ -224,13 +227,18 @@ function normalizeOrderRow(row) {
     tax: numericValue(tax),
     total: numericValue(total),
     paymentMethod,
-    status: "Pending"
+    customerName: customerName || "",
+    status: status || "Pending"
   };
 }
 
 function looksLikeItems(value) {
   const text = String(value || "").trim();
   return text.startsWith("[") || text.startsWith("{");
+}
+
+function isOrderStatus(value) {
+  return value === "Done" || value === "Pending";
 }
 
 function numericValue(value) {
@@ -270,6 +278,7 @@ async function saveOrder(order) {
     order.tax,
     order.total,
     order.paymentMethod,
+    order.customerName || "",
     order.status || "Pending"
   ]]);
   await appendAnalytics(order);
@@ -286,7 +295,7 @@ async function updateOrderStatus(orderID, status) {
   const rows = await sheets.getRows(ORDERS_RANGE);
   const rowIndex = rows.findIndex((row) => row[0] === orderID);
   if (rowIndex === -1) throw new Error("Order not found.");
-  await sheets.updateRows(`Orders!K${rowIndex + 2}`, [[normalizedStatus]]);
+  await sheets.updateRows(`Orders!L${rowIndex + 2}`, [[normalizedStatus]]);
   return { orderID, status: normalizedStatus };
 }
 
@@ -332,7 +341,7 @@ async function handleApi(req, res, url) {
         PRODUCT_HEADERS,
         ...AKRAL_PRODUCTS.map((product) => [product.id, product.name, product.category, product.variablePrice ? "variable" : product.price, product.imageURL])
       ]);
-      await sheets.updateRows("Orders!A1:K", [ORDER_HEADERS]);
+      await sheets.updateRows("Orders!A1:L", [ORDER_HEADERS]);
       sendJson(res, 200, { ok: true, products: AKRAL_PRODUCTS.length });
       return;
     }
@@ -350,7 +359,8 @@ async function handleApi(req, res, url) {
       const orderID = `AKR-${Date.now().toString(36).toUpperCase()}`;
       const date = new Date().toISOString();
       const paymentMethod = ["Cash", "QRIS", "Transfer"].includes(payload.paymentMethod) ? payload.paymentMethod : "Cash";
-      const order = { orderID, date, paymentMethod, status: "Pending", ...calculated };
+      const customerName = String(payload.customerName || "").trim().slice(0, 80);
+      const order = { orderID, date, paymentMethod, customerName, status: "Pending", ...calculated };
 
       await saveOrder(order);
       sendJson(res, 201, { order });

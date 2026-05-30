@@ -54,6 +54,10 @@
             <div class="cart-items" id="cartItems"></div>
 
             <div class="order-controls">
+              <label class="customer-field">
+                <span>Customer name</span>
+                <input id="customerName" type="text" maxlength="80" autocomplete="off" placeholder="Optional">
+              </label>
               <label class="toggle-row">
                 <input id="taxToggle" type="checkbox">
                 <span>Tax 11%</span>
@@ -103,7 +107,7 @@
             <button class="ghost-button" id="refreshHistoryButton">Refresh</button>
           </div>
           <div class="history-tools">
-            <input id="historySearch" type="search" placeholder="Search order number">
+            <input id="historySearch" type="search" placeholder="Search order, item, or customer">
             <label>
               <span>Start date</span>
               <input id="historyStartDate" type="date">

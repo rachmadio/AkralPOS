@@ -295,8 +295,8 @@ https://docs.google.com/spreadsheets/d/SHEET_ID_HERE/edit
 
 `Orders`
 
-| OrderID | Date | Time | Items | Subtotal | Discount | DiscountType | Tax | Total | PaymentMethod | Status |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| OrderID | Date | Time | Items | Subtotal | Discount | DiscountType | Tax | Total | PaymentMethod | CustomerName | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 `Analytics`
 

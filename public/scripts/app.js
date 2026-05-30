@@ -142,6 +142,11 @@ function productCartQuantity(productId) {
     .reduce((sum, item) => sum + item.quantity, 0);
 }
 
+function orderItemText(item) {
+  const detail = [item.notes, item.bean ? `Bean: ${item.bean}` : ""].filter(Boolean).join(", ");
+  return `${item.quantity}x ${escapeHTML(item.name)}${detail ? ` (${escapeHTML(detail)})` : ""}`;
+}
+
 function renderProducts() {
   const query = $("#searchInput").value.trim().toLowerCase();
   const products = state.products.filter((product) => {
@@ -276,6 +281,7 @@ function setView(view) {
 
 function resetOrder() {
   state.cart = [];
+  $("#customerName").value = "";
   $("#discountValue").value = "";
   $("#taxToggle").checked = false;
   $("#cashReceived").value = "";
@@ -305,11 +311,12 @@ async function checkout() {
         discountType: $("#discountType").value,
         discountValue: Number($("#discountValue").value || 0),
         taxEnabled: $("#taxToggle").checked,
-        paymentMethod: state.paymentMethod
+        paymentMethod: state.paymentMethod,
+        customerName: $("#customerName").value.trim()
       })
     });
 
-    $("#confirmText").textContent = `${data.order.orderID} · ${formatIDR(data.order.total)} · ${data.order.paymentMethod}`;
+    $("#confirmText").textContent = `${data.order.orderID}${data.order.customerName ? ` · ${data.order.customerName}` : ""} · ${formatIDR(data.order.total)} · ${data.order.paymentMethod}`;
     $("#confirmModal").showModal();
     resetOrder();
     loadOrders();
@@ -330,8 +337,9 @@ function filteredOrders() {
   const endValue = start <= end ? end : start;
   return state.orders.filter((order) => {
     const orderItemsText = order.items.map((item) => item.name).join(" ").toLowerCase();
+    const customerName = String(order.customerName || "").toLowerCase();
     const orderKey = dateKey(order.date);
-    const matchesSearch = !search || order.orderID.toLowerCase().includes(search) || orderItemsText.includes(search);
+    const matchesSearch = !search || order.orderID.toLowerCase().includes(search) || orderItemsText.includes(search) || customerName.includes(search);
     const matchesDate = orderKey >= startValue && orderKey <= endValue;
     return matchesSearch && matchesDate;
   });
@@ -354,8 +362,8 @@ function renderHistory() {
                   <strong>${escapeHTML(order.orderID)}</strong>
                   <span class="status-pill ${isDone ? "done" : "pending"}">${isDone ? "Done" : "Pending"}</span>
                 </div>
-                <p>${orderDate(order).toLocaleString("id-ID")} · ${order.paymentMethod}</p>
-                <p>${order.items.map((item) => `${item.quantity}x ${escapeHTML(item.name)}`).join(", ")}</p>
+                <p>${orderDate(order).toLocaleString("id-ID")} · ${order.paymentMethod}${order.customerName ? ` · ${escapeHTML(order.customerName)}` : ""}</p>
+                <p>${order.items.map(orderItemText).join(", ")}</p>
                 <div class="history-badges">
                   ${hasDiscount ? `<span>Discount ${formatIDR(order.discount)}</span>` : ""}
                   ${hasTax ? `<span>Tax ${formatIDR(order.tax)}</span>` : ""}

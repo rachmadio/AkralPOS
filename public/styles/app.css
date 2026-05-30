@@ -171,6 +171,7 @@ h3 {
 .cart-pane.is-saving .cart-items,
 .cart-pane.is-saving .order-controls,
 .cart-pane.is-saving .payment-methods,
+.cart-pane.is-saving .customer-field,
 .cart-pane.is-saving .cash-field,
 .cart-pane.is-saving .change-line {
   opacity: 0.62;
@@ -223,6 +224,7 @@ button:active {
 }
 
 .search-field,
+.customer-field,
 .cash-field,
 .dashboard-filters label,
 .history-tools label,
